@@ -494,13 +494,125 @@ public class GFIPMSTSTokenProvider extends DefaultSAMLTokenProvider implements S
     }
 
     private Assertion validateOnBehafOfToken(Element onBehalfOfToken) throws WSTrustException {
-
         if (DEBUG) {
-            logger.log(Level.FINEST, "<<<<<<<<<<<<<<<<<<ADS: Validating SAML Assertion supplied within OnBehalfOf >>>>>>>>>>>>>>>\n");
+            logger.log(Level.FINEST,
+                    "<<<<<<<<<<<<<<<<<<ADS: Validating SAML Assertion supplied within OnBehalfOf >>>>>>>>>>>>>>>\n");
         }
-
+        autofix6(onBehalfOfToken);
+        Assertion assertion = null;
         try {
-            //Do a SAML:Conditions validation to make sure the SAML assertion is Valid
+            assertion = AssertionUtil.fromElement(onBehalfOfToken);
+        } catch (SAMLException ex) {
+            Logger.getLogger(GFIPMSTSTokenProvider.class.getName()).log(Level.SEVERE,
+                    "Unable to create SAML Assertion from content of OnBehalfOfToken", ex);
+            throw new WSTrustException("Unable to create SAML Assertion from content of OnBehalfOfToken", ex);
+        }
+        String assertionVersion = assertion.getVersion();
+        if ((assertionVersion == null) || (!(assertionVersion.compareTo("2.0") == 0))) {
+            logger.log(Level.WARNING, "Invalid version of the SAML assertion: " + assertionVersion);
+            throw new WSTrustException("ADS: Invalid version of the SAML assertion.");
+        } else {
+            if (DEBUG) {
+                logger.log(Level.FINEST, "ADS: Validated SAML Version : " + assertion.getVersion());
+            }
+        }
+        com.sun.xml.wss.saml.Subject subject = assertion.getSubject();
+        if (subject == null) {
+            throw new WSTrustException("ADS: SAML Assertion is missing subject.");
+        }
+        autofix4(assertion);
+        autofix2(assertion);
+        return assertion;
+    }
+
+    private String getAuthContextClassRef(Assertion assertion) {
+        String authnContextClassRef = null;
+        for (Object statement : assertion.getStatements()) {
+            if (statement instanceof AuthnStatement) {
+                AuthnStatement authnStatement = (AuthnStatement) statement;
+                authnContextClassRef = authnStatement.getAuthnContextClassRef();
+            }
+        }
+        return authnContextClassRef;
+    }
+
+    /**
+	 * TODO: The exception might be Generic, please verify and update the same
+	 * 
+	 */
+    private void autofix4(Assertion assertion) throws WSTrustException {
+        Conditions conditions = assertion.getConditions();
+        boolean isAudienceRestrictionValid = false;
+        for (Object condition : conditions.getConditions()) {
+            if (condition instanceof DelegationRestrictionType) {
+                autofix1(condition);
+            } else if (condition instanceof AudienceRestrictionType) {
+                List<String> audienceList = ((AudienceRestrictionType) condition).getAudience();
+                if (audienceList.isEmpty()) {
+                    throw new WSTrustException("ADS: Audience restriction is empty.");
+                } else {
+                    isAudienceRestrictionValid = true;
+                }
+            }
+        }
+        if (!isAudienceRestrictionValid) {
+            throw new WSTrustException("ADS: Audience restriction was not set.");
+        }
+    }
+
+    /**
+	 * TODO: The exception might be Generic, please verify and update the same
+	 * 
+	 */
+    private void autofix1(Object condition) throws WSTrustException {
+        List<DelegateType> delegateList = ((DelegationRestrictionType) condition).getDelegate();
+        if (delegateList.isEmpty()) {
+            throw new WSTrustException("ADS: Delegate restrictions element is present but the list is empty.");
+        }
+        for (DelegateType delegate : delegateList) {
+            String delegateNameId = delegate.getNameID().getValue();
+            if (tf.getRoleDescriptorType(delegateNameId) == null) {
+                throw new WSTrustException(
+                        "ADS: Delegate restrictions list contains entities that does not belong to the GFIPM CTF.");
+            }
+        }
+    }
+
+    /**
+	 * TODO: The exception might be Generic, please verify and update the same
+	 * 
+	 */
+    private void autofix2(Assertion assertion) throws WSTrustException {
+        String authnContextClassRef = getAuthContextClassRef(assertion);
+        if (authnContextClassRef != null && !authnContextClassRef.isEmpty()) {
+            if (DEBUG) {
+                logger.log(Level.FINEST, "ADS: Authentication Context is valid : " + authnContextClassRef);
+            }
+        } else {
+            throw new WSTrustException("ADS: Authentication Context is not valid or was not set.");
+        }
+        if (DEBUG) {
+            logger.log(Level.FINEST,
+                    "<<<<<<<<<<<<<<<<<<ADS: SAML Assertion supplied within OnBehalfOf is VALID >>>>>>>>>>>>>>>");
+        }
+    }
+
+    /**
+	 * TODO: The exception might be Generic, please verify and update the same
+	 * 
+	 */
+    private void autofix6(Element onBehalfOfToken) throws WSTrustException {
+        autofix3(onBehalfOfToken);
+        PublicKey signingKey = null;
+        autofix5(onBehalfOfToken, signingKey);
+    }
+
+    /**
+	 * TODO: The exception might be Generic, please verify and update the same
+	 * 
+	 */
+    private void autofix3(Element onBehalfOfToken) throws WSTrustException {
+        try {
             if (!(SAMLUtil.validateTimeInConditionsStatement(onBehalfOfToken))) {
                 logger.log(Level.WARNING, "Invalid time conditions");
                 throw new WSTrustException("Invalid time conditions");
@@ -513,8 +625,13 @@ public class GFIPMSTSTokenProvider extends DefaultSAMLTokenProvider implements S
             Logger.getLogger(GFIPMSTSTokenProvider.class.getName()).log(Level.SEVERE, null, ex);
             throw new WSTrustException("Invalid time conditions", ex);
         }
+    }
 
-        PublicKey signingKey = null;
+    /**
+	 * TODO: The exception might be Generic, please verify and update the same
+	 * 
+	 */
+    private void autofix5(Element onBehalfOfToken, PublicKey signingKey) throws WSTrustException {
         try {
             signingKey = SecurityUtil.getSignaturePublicKey(onBehalfOfToken.getOwnerDocument());
         } catch (ParserConfigurationException ex) {
@@ -527,7 +644,6 @@ public class GFIPMSTSTokenProvider extends DefaultSAMLTokenProvider implements S
             logger.log(Level.WARNING, "IOException while obtaining Signature Public Key", ex);
             throw new WSTrustException("IOException while obtaining Signature Public Key", ex);
         }
-
         if (signingKey != null) {
             try {
                 if (!(SAMLUtil.verifySignature(onBehalfOfToken, signingKey))) {
@@ -535,111 +651,35 @@ public class GFIPMSTSTokenProvider extends DefaultSAMLTokenProvider implements S
                     throw new WSTrustException("Unable to verify signature on SAML assertion.");
                 } else {
                     if (DEBUG) {
-                        logger.log(Level.FINEST, "ADS: done verifying signature on the attached SAML assertion - valid");
+                        logger.log(Level.FINEST,
+                                "ADS: done verifying signature on the attached SAML assertion - valid");
                     }
                 }
             } catch (XWSSecurityException ex) {
-                Logger.getLogger(GFIPMSTSTokenProvider.class.getName()).log(Level.SEVERE, "Failure to verify signature on SAML assertion ", ex);
+                Logger.getLogger(GFIPMSTSTokenProvider.class.getName()).log(Level.SEVERE,
+                        "Failure to verify signature on SAML assertion ", ex);
                 throw new WSTrustException("Failure to verify signature on SAML assertion", ex);
             }
         } else {
             logger.log(Level.WARNING, "Unable to obtain signing key from SAML assertion.");
             throw new WSTrustException("Unable to obtain signing key from SAML assertion.");
         }
-
         String signingEntityId = tf.getEntityId(signingKey);
-
         if (signingEntityId == null) {
-            logger.log(Level.WARNING, "Certificate used by the peer is not in the GFIPM Trust Fabric. Signing key is :\n" + signingKey);
+            logger.log(Level.WARNING,
+                    "Certificate used by the peer is not in the GFIPM Trust Fabric. Signing key is :\n" + signingKey);
             throw new WSTrustException("Certificate used by the peer is not in the GFIPM Trust Fabric");
         }
-
         if (tf.isAssertionDelegateService(signingEntityId)) {
             if (DEBUG) {
-                logger.log(Level.FINEST, "ADS: SAML assertion was signed by the Assertion Delegate Service Entity in GFIPM Trust Fabric, Singing Entity ID: " + signingEntityId);
+                logger.log(Level.FINEST,
+                        "ADS: SAML assertion was signed by the Assertion Delegate Service Entity in GFIPM Trust Fabric, Singing Entity ID: "
+                                + signingEntityId);
             }
         } else {
-            throw new WSTrustException("User assertion was not signed by the Assertion Delegate Service Entity in GFIPM Trust Fabric, Singing Entity ID: " + signingEntityId);
+            throw new WSTrustException(
+                    "User assertion was not signed by the Assertion Delegate Service Entity in GFIPM Trust Fabric, Singing Entity ID: "
+                            + signingEntityId);
         }
-
-        Assertion assertion = null;
-        try {
-            assertion = AssertionUtil.fromElement(onBehalfOfToken);
-        } catch (SAMLException ex) {
-            Logger.getLogger(GFIPMSTSTokenProvider.class.getName()).log(Level.SEVERE, "Unable to create SAML Assertion from content of OnBehalfOfToken", ex);
-            throw new WSTrustException("Unable to create SAML Assertion from content of OnBehalfOfToken", ex);
-        }
-
-        //check if it's SAML 2.0 assertion
-        String assertionVersion = assertion.getVersion();
-        if ((assertionVersion == null) || (!(assertionVersion.compareTo("2.0") == 0))) {
-            logger.log(Level.WARNING, "Invalid version of the SAML assertion: " + assertionVersion);
-            throw new WSTrustException("ADS: Invalid version of the SAML assertion.");
-        } else {
-            if (DEBUG) {
-                logger.log(Level.FINEST, "ADS: Validated SAML Version : " + assertion.getVersion());
-            }
-        }
-
-        com.sun.xml.wss.saml.Subject subject = assertion.getSubject();
-
-        if (subject == null) {
-            throw new WSTrustException("ADS: SAML Assertion is missing subject.");
-        }
-
-        Conditions conditions = assertion.getConditions();
-        boolean isAudienceRestrictionValid = false;
-        for (Object condition : conditions.getConditions()) {
-            if (condition instanceof DelegationRestrictionType) {
-                List<DelegateType> delegateList = ((DelegationRestrictionType) condition).getDelegate();
-                if (delegateList.isEmpty()) {
-                    throw new WSTrustException("ADS: Delegate restrictions element is present but the list is empty.");
-                }
-                for (DelegateType delegate : delegateList) {
-                    String delegateNameId = delegate.getNameID().getValue();
-                    if (tf.getRoleDescriptorType(delegateNameId) == null) {
-                        throw new WSTrustException("ADS: Delegate restrictions list contains entities that does not belong to the GFIPM CTF.");
-                    }
-                }
-            } else if (condition instanceof AudienceRestrictionType) {
-                List<String> audienceList = ((AudienceRestrictionType) condition).getAudience();
-                if (audienceList.isEmpty()) {
-                    throw new WSTrustException("ADS: Audience restriction is empty.");
-                } else {
-                    isAudienceRestrictionValid = true;
-                }
-            }
-        }//Conditions
-        if (!isAudienceRestrictionValid) {
-            throw new WSTrustException("ADS: Audience restriction was not set.");
-        }
-
-        String authnContextClassRef = getAuthContextClassRef(assertion);
-        if (authnContextClassRef != null && !authnContextClassRef.isEmpty()) {
-            if (DEBUG) {
-                logger.log(Level.FINEST, "ADS: Authentication Context is valid : " + authnContextClassRef);
-            }
-        } else {
-            throw new WSTrustException("ADS: Authentication Context is not valid or was not set.");
-        }
-        
-        if (DEBUG) {
-            logger.log(Level.FINEST, "<<<<<<<<<<<<<<<<<<ADS: SAML Assertion supplied within OnBehalfOf is VALID >>>>>>>>>>>>>>>");
-        }
-
-        
-        return assertion;
-
-    }
-
-    private String getAuthContextClassRef(Assertion assertion) {
-        String authnContextClassRef = null;
-        for (Object statement : assertion.getStatements()) {
-            if (statement instanceof AuthnStatement) {
-                AuthnStatement authnStatement = (AuthnStatement) statement;
-                authnContextClassRef = authnStatement.getAuthnContextClassRef();
-            }
-        }
-        return authnContextClassRef;
     }
 }
