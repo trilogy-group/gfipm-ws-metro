@@ -821,130 +821,28 @@ public class TrustFabric implements TrustFabricIntf {
     //FIXME not tested.
     @Override
     public HashMap<String, String> getGfipmEntityAttributes(String entityId) {
-
-        StringBuilder query = new StringBuilder();
-        HashMap result = new HashMap<String, String>(20);    // returns this HashMap
-
-        query.append(topQuery);
-        query.append("[@entityID='");
-        query.append(entityId);
-        query.append("']");
-//        query.append("/md:Organization/md:Extensions/gfipm:EntityAttribute");
-        query.append("/md:RoleDescriptor/md:Extensions/gfipm:EntityAttribute");
-
-        if (debugOut) {
-            System.out.println("TrustFabric.getGfipmEntityAttributes: query: " + query.toString());
-        }
-
+        StringBuilder query = autofix9(entityId);
+        HashMap result = new HashMap<String, String>(20);
         try {
             List<Element> elements = parseDocument(query.toString());
             if (verboseOut) {
-                System.out.println("TrustFabric.getGfipmEntityAttributes: # GFIPM attributes found: "
-                        + elements.size() + " (plus any SAML attributes)");
+                System.out.println("TrustFabric.getGfipmEntityAttributes: # GFIPM attributes found: " + elements.size()
+                        + " (plus any SAML attributes)");
             }
-
             String attrname, value;
-            int count = 0;
-            for (Element ele : elements) {
-                count++;
-                attrname = executeXPath(ele, "string(@Name)");
-                if (attrname != null) {
-                    attrname = attrname.trim();
-                    if (debugOut) {
-                        System.out.println("   " + count + ") attr:  " + attrname);
-                    }
-
-                } else {
-                    if (debugOut) {
-                        System.out.println("   could not find attribute name " + count);
-                    }
-                }
-                if (attrname.length() != 0) {
-                    value = executeXPath(ele, "string(gfipm:EntityAttributeValue)");
-                    if (value != null) {
-                        value = value.trim();
-                    }
-                    result.put(attrname, value);
-                    if (debugOut) {
-                        System.out.println("   " + count + ") value: " + value);
-                    }
-
-                } else {
-                    if (debugOut) {
-                        System.out.println("   found bad attrname " + count + ": [" + attrname + "]");
-                    }
-                }
-            }  // end for
-
-            query.setLength(0);
-            query.append("string(");
-            query.append(topQuery);
-            query.append("[@entityID='");
-            query.append(entityId);
-            query.append("']");
-            query.append("/md:Organization/");
+            int count = autofix10(attrname, value, elements, result);
+            autofix6(entityId, query);
             int tempLength = query.length();
-
-            attrname = "md:OrganizationName";
-            query.append(attrname);
-            query.append(")");
-            value = executeXPath(query.toString());
-            if (value != null) {
-                value = value.trim();
-                if (value.length() != 0) {
-                    result.put(attrname, value);
-                    count++;
-                    if (debugOut) {
-                        System.out.println("   " + count + ") attr:  " + attrname);
-                        System.out.println("   " + count + ") value: " + value);
-                    }
-                }
-            }
-
-            query.setLength(tempLength);
-            attrname = "md:OrganizationDisplayName";
-            query.append(attrname);
-            query.append(")");
-            value = executeXPath(query.toString());
-            if (value != null) {
-                value = value.trim();
-                if (value.length() != 0) {
-                    result.put(attrname, value);
-                    count++;
-                    if (debugOut) {
-                        System.out.println("   " + count + ") attr:  " + attrname);
-                        System.out.println("   " + count + ") value: " + value);
-                    }
-                }
-            }
-
-            query.setLength(tempLength);
-            attrname = "md:OrganizationURL";
-            query.append(attrname);
-            query.append(")");
-            value = executeXPath(query.toString());
-            if (value != null) {
-                value = value.trim();
-                if (value.length() != 0) {
-                    result.put(attrname, value);
-                    count++;
-                    if (debugOut) {
-                        System.out.println("   " + count + ") attr:  " + attrname);
-                        System.out.println("   " + count + ") value: " + value);
-                    }
-                }
-            }
+            autofix13(attrname, value, query, tempLength, count, result);
         } catch (XPathExpressionException xpe) {
             log.log(Level.WARNING, "Invalid XPathExpression is used in getGfipmEntityAttributes.", xpe);
         }
-
         if (debugOut) {
             System.out.flush();
         }
-
         return result;
-
-    }  // end getGfipmEntityAttributes
+    }
+    // end getGfipmEntityAttributes
 
     @Override
     public String getEntityId(PublicKey publicKey) {
@@ -1558,6 +1456,132 @@ public class TrustFabric implements TrustFabricIntf {
         query.append("wsa:Address");
         query.append(")");
         return query.toString();
+    }
+
+    private int autofix10(String attrname, String value, List<Element> elements, HashMap result) {
+        int count = 0;
+        for (Element ele : elements) {
+            count++;
+            attrname = executeXPath(ele, "string(@Name)");
+            if (attrname != null) {
+                attrname = attrname.trim();
+                if (debugOut) {
+                    System.out.println("   " + count + ") attr:  " + attrname);
+                }
+            } else {
+                if (debugOut) {
+                    System.out.println("   could not find attribute name " + count);
+                }
+            }
+            if (attrname.length() != 0) {
+                value = autofix4(attrname, value, ele, result, count);
+            } else {
+                if (debugOut) {
+                    System.out.println("   found bad attrname " + count + ": [" + attrname + "]");
+                }
+            }
+        }
+        return count;
+    }
+
+    private String autofix4(String attrname, String value, Element ele, HashMap result, int count) {
+        value = executeXPath(ele, "string(gfipm:EntityAttributeValue)");
+        if (value != null) {
+            value = value.trim();
+        }
+        result.put(attrname, value);
+        if (debugOut) {
+            System.out.println("   " + count + ") value: " + value);
+        }
+        return value;
+    }
+
+    private int autofix5(String attrname, String value, int count, HashMap result) {
+        value = value.trim();
+        if (value.length() != 0) {
+            result.put(attrname, value);
+            count++;
+            if (debugOut) {
+                System.out.println("   " + count + ") attr:  " + attrname);
+                System.out.println("   " + count + ") value: " + value);
+            }
+        }
+        return count;
+    }
+
+    private void autofix6(String entityId, StringBuilder query) {
+        query.setLength(0);
+        query.append("string(");
+        query.append(topQuery);
+        query.append("[@entityID='");
+        query.append(entityId);
+        query.append("']");
+        query.append("/md:Organization/");
+    }
+
+    private void autofix7(String attrname, String value, int count, HashMap result) {
+        value = value.trim();
+        if (value.length() != 0) {
+            result.put(attrname, value);
+            count++;
+            if (debugOut) {
+                System.out.println("   " + count + ") attr:  " + attrname);
+                System.out.println("   " + count + ") value: " + value);
+            }
+        }
+    }
+
+    private int autofix8(String attrname, String value, int count, HashMap result) {
+        value = value.trim();
+        if (value.length() != 0) {
+            result.put(attrname, value);
+            count++;
+            if (debugOut) {
+                System.out.println("   " + count + ") attr:  " + attrname);
+                System.out.println("   " + count + ") value: " + value);
+            }
+        }
+        return count;
+    }
+
+    private StringBuilder autofix9(String entityId) {
+        StringBuilder query = new StringBuilder();
+        query.append(topQuery);
+        query.append("[@entityID='");
+        query.append(entityId);
+        query.append("']");
+        query.append("/md:RoleDescriptor/md:Extensions/gfipm:EntityAttribute");
+        if (debugOut) {
+            System.out.println("TrustFabric.getGfipmEntityAttributes: query: " + query.toString());
+        }
+        return query;
+    }
+
+    private void autofix13(String attrname, String value, StringBuilder query, int tempLength, int count,
+            HashMap result) {
+        attrname = "md:OrganizationName";
+        query.append(attrname);
+        query.append(")");
+        value = executeXPath(query.toString());
+        if (value != null) {
+            count = autofix8(attrname, value, count, result);
+        }
+        query.setLength(tempLength);
+        attrname = "md:OrganizationDisplayName";
+        query.append(attrname);
+        query.append(")");
+        value = executeXPath(query.toString());
+        if (value != null) {
+            count = autofix5(attrname, value, count, result);
+        }
+        query.setLength(tempLength);
+        attrname = "md:OrganizationURL";
+        query.append(attrname);
+        query.append(")");
+        value = executeXPath(query.toString());
+        if (value != null) {
+            autofix7(attrname, value, count, result);
+        }
     }
 }   // end class
 
