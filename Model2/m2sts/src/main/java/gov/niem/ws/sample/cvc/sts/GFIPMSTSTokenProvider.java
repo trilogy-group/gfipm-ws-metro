@@ -238,49 +238,26 @@ public class GFIPMSTSTokenProvider extends DefaultSAMLTokenProvider implements S
         ctx.setUnAttachedSecurityTokenReference(samlReference);
     }
 
-    protected Assertion createSAML20Assertion(final WSTrustVersion wstVer,
-            final int lifeSpan, String confirMethod,
-            final String assertionId,
-            final String issuer,
-            final String appliesTo,
-            final KeyInfo keyInfo,
-            final Map<QName, List<String>> claimedAttrs,
-            String keyType,
-            String authnCtx,
-            String delegateId)
+    protected Assertion createSAML20Assertion(final WSTrustVersion wstVer, final int lifeSpan, String confirMethod,
+            final String assertionId, final String issuer, final String appliesTo, final KeyInfo keyInfo,
+            final Map<QName, List<String>> claimedAttrs, String keyType, String authnCtx, String delegateId)
             throws WSTrustException {
-
         if (DEBUG) {
-            logger.log(Level.FINEST, "STS Token Provider: createSAML20Assertion :: \n"
-                    + "\n\t WSTrustVersion = " + wstVer
-                    + "\n\t lifeSpan = " + lifeSpan
-                    + "\n\t confirMethod = " + confirMethod
-                    + "\n\t assertionId = " + assertionId
-                    + "\n\t issuer = " + issuer
-                    + "\n\t appliesTo" + appliesTo
-                    + "\n\t keyInfo = " + keyInfo
-                    + "\n\t keyType = " + keyType
-                    + "\n\t authnCtx = " + authnCtx
-                    + "\n\t delegateId = " + delegateId);
+            logger.log(Level.FINEST,
+                    "STS Token Provider: createSAML20Assertion :: \n" + "\n\t WSTrustVersion = " + wstVer
+                            + "\n\t lifeSpan = " + lifeSpan + "\n\t confirMethod = " + confirMethod
+                            + "\n\t assertionId = " + assertionId + "\n\t issuer = " + issuer + "\n\t appliesTo"
+                            + appliesTo + "\n\t keyInfo = " + keyInfo + "\n\t keyType = " + keyType + "\n\t authnCtx = "
+                            + authnCtx + "\n\t delegateId = " + delegateId);
         }
-
         Assertion assertion = null;
         try {
             final SAMLAssertionFactory samlFac = SAMLAssertionFactory.newInstance(SAMLAssertionFactory.SAML2_0);
-
-            // Create Conditions
             final TimeZone utcTimeZone = TimeZone.getTimeZone("UTC");
             final GregorianCalendar issueInst = new GregorianCalendar(utcTimeZone);
             final GregorianCalendar notOnOrAfter = new GregorianCalendar(utcTimeZone);
             notOnOrAfter.add(Calendar.MILLISECOND, lifeSpan);
-
-            List<AudienceRestriction> arc = null;
-            if (appliesTo != null) {
-                arc = new ArrayList<AudienceRestriction>();
-                List<String> au = new ArrayList<String>();
-                au.add(appliesTo);
-                arc.add(samlFac.createAudienceRestriction(au));
-            }
+            List<AudienceRestriction> arc = autofix2(samlFac, appliesTo);
             KeyInfoConfirmationData keyInfoConfData = null;
             if (keyType.equals(wstVer.getBearerKeyTypeURI())) {
                 confirMethod = SAML_BEARER_2_0;
@@ -292,123 +269,25 @@ public class GFIPMSTSTokenProvider extends DefaultSAMLTokenProvider implements S
                     keyInfoConfData = samlFac.createKeyInfoConfirmationData(keyInfo.getElement());
                 }
             }
-
-            //Create NameId for the subject confirmation
             NameID subjectConfirmationNameId = null;
             if (delegateId != null) {
                 subjectConfirmationNameId = samlFac.createNameID(delegateId, null, null);
             }
-
-            final SubjectConfirmation subjectConfirm = samlFac.createSubjectConfirmation(
-                    subjectConfirmationNameId, keyInfoConfData, confirMethod);
-
+            final SubjectConfirmation subjectConfirm = samlFac.createSubjectConfirmation(subjectConfirmationNameId,
+                    keyInfoConfData, confirMethod);
             com.sun.xml.wss.saml.Subject subj = null;
-            //final List<Attribute> attrs = new ArrayList<Attribute>();
-            QName idName = null;
-            String id = null;
-            String idNS = null;
-            if (DEBUG) {
-                logger.log(Level.FINEST, "STS Token Provider:: claimed attrs");
-            }
-            final Set<Map.Entry<QName, List<String>>> entries = claimedAttrs.entrySet();
-            for (Map.Entry<QName, List<String>> entry : entries) {
-                final QName attrKey = entry.getKey();
-                final List<String> values = entry.getValue();
-                if (DEBUG) {
-                    logger.log(Level.FINEST, " atrKey: " + attrKey.getLocalPart() + " attr values: " + values);
-                }
-                if (values != null) {
-                    if ("ActAs".equals(attrKey.getLocalPart())) {
-                        if (values.size() > 0) {
-                            id = values.get(0);
-                        } else {
-                            id = null;
-                        }
-                        idNS = attrKey.getNamespaceURI();
-                        idName = attrKey;
-
-                        break;
-                    } else if (STSAttributeProvider.NAME_IDENTIFIER.equals(attrKey.getLocalPart()) && subj == null) {
-                        if (values.size() > 0) {
-                            id = values.get(0);
-                        }
-                        idNS = attrKey.getNamespaceURI();
-                        idName = attrKey;
-                    }
-                    //else{
-                    //  final Attribute attr = samlFac.createAttribute(attrKey.getLocalPart(), attrKey.getNamespaceURI(), values);
-                    //  attrs.add(attr);
-                    //}
-                }
-            }
-
-            NameID nameId = null;
-            if (idName != null && id != null) {
-                nameId = samlFac.createNameID(id, idNS, null);
-                claimedAttrs.remove(idName);
-            }
-            subj = samlFac.createSubject(nameId, subjectConfirm);
-
-            //This will not work due to a bug in com.sun.xml.wss.saml.assertion.saml20.jaxb20.Conditions.java
-//            List <Condition> conditionList = new ArrayList<Condition>();
-//            final Conditions conditions = samlFac.createConditions(issueInst, notOnOrAfter, conditionList, arc, null, null);
-            //Instead we'll have to obtain and add list manually (see SAML20JAXBUtil, JAXBUtil for details)
-            final Conditions conditions = samlFac.createConditions(issueInst, notOnOrAfter, null, arc, null, null);
-
-            List<ConditionAbstractType> conditionOrAudienceRestrictionOrOneTimeUseList =
-                    ((com.sun.xml.wss.saml.assertion.saml20.jaxb20.Conditions) conditions).getConditionOrAudienceRestrictionOrOneTimeUse();
-            if (delegateId != null) {
-                List<com.sun.xml.wss.saml.assertion.saml20.jaxb20.Condition> cond = null;
-                cond = getCondition(delegateId);
-                conditionOrAudienceRestrictionOrOneTimeUseList.addAll(cond);
-            }
-
-            final List<Object> statements = new ArrayList<Object>();
-
-            //The default Metro behaviour is to produce either AuthnStatement or AttributeStatement, but not both. 
-            //See bug: http://java.net/jira/browse/WSIT-1580
-//            if (claimedAttrs.isEmpty()) {
-//                System.out.println("STS: in claimedAttrs, authentication context: " + authnCtx);
-//                AuthnContext ctx = samlFac.createAuthnContext(authnCtx, null);
-//                SubjectLocality subjectLocality = samlFac.createSubjectLocality("10.50.12.20", "gtri.gatech.edu");
-//                final AuthnStatement statement = samlFac.createAuthnStatement(issueInst, subjectLocality, ctx, null, null);
-//                statements.add(statement);
-//            } else {
-//                System.out.println("STS: claimedAttrs are empty ");
-//                final AttributeStatement statement = samlFac.createAttributeStatement(null);
-//                statements.add(statement);
-//            }
-
-            AuthnContext ctx = samlFac.createAuthnContext(authnCtx, null);
-            final AuthnStatement authnStatement = samlFac.createAuthnStatement(issueInst, null, ctx, null, null);
-            statements.add(authnStatement);
-            final AttributeStatement attributeStatement = samlFac.createAttributeStatement(null);
-            statements.add(attributeStatement);
-
-            final NameID issuerID = samlFac.createNameID(issuer, null, null);
-
-            //Create Assertion
-            assertion =
-                    samlFac.createAssertion(assertionId, issuerID, issueInst, conditions, null, null, statements);
-            if (!claimedAttrs.isEmpty()) {
-//                assertion = WSTrustUtil.addSamlAttributes(assertion, claimedAttrs);
-                assertion = GFIPMWSTrustUtil.addSamlAttributes(assertion, claimedAttrs);
-            }
-            ((com.sun.xml.wss.saml.assertion.saml20.jaxb20.Assertion) assertion).setSubject((com.sun.xml.wss.saml.internal.saml20.jaxb20.SubjectType) subj);
+            assertion = autofix8(subj, samlFac, issuer, claimedAttrs, delegateId, subjectConfirm, authnCtx, assertionId,
+                    arc, notOnOrAfter, issueInst, assertion);
         } catch (SAMLException ex) {
-            logger.log(Level.SEVERE,
-                    LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
-            throw new WSTrustException(
-                    LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
+            logger.log(Level.SEVERE, LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
+            throw new WSTrustException(LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
         } catch (XWSSecurityException ex) {
-            logger.log(Level.SEVERE,
-                    LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
-            throw new WSTrustException(
-                    LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
+            logger.log(Level.SEVERE, LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
+            throw new WSTrustException(LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
         }
-
         return assertion;
     }
+
 //
 //    @Override
 //    public void isValideToken(IssuedTokenContext ctx) throws WSTrustException {
@@ -641,5 +520,100 @@ public class GFIPMSTSTokenProvider extends DefaultSAMLTokenProvider implements S
             }
         }
         return authnContextClassRef;
+    }
+
+    /**
+	 * TODO: The exception might be Generic, please verify and update the same
+	 * 
+	 */
+    private Assertion autofix8(com.sun.xml.wss.saml.Subject subj, SAMLAssertionFactory samlFac, String issuer,
+            Map<QName, List<String>> claimedAttrs, String delegateId, SubjectConfirmation subjectConfirm,
+            String authnCtx, String assertionId, List<AudienceRestriction> arc, GregorianCalendar notOnOrAfter,
+            GregorianCalendar issueInst, Assertion assertion) throws WSTrustException {
+        QName idName = null;
+        NameID nameId = autofix7(subj, idName, samlFac, claimedAttrs);
+        subj = samlFac.createSubject(nameId, subjectConfirm);
+        final Conditions conditions = samlFac.createConditions(issueInst, notOnOrAfter, null, arc, null, null);
+        List<ConditionAbstractType> conditionOrAudienceRestrictionOrOneTimeUseList = ((com.sun.xml.wss.saml.assertion.saml20.jaxb20.Conditions) conditions)
+                .getConditionOrAudienceRestrictionOrOneTimeUse();
+        if (delegateId != null) {
+            List<com.sun.xml.wss.saml.assertion.saml20.jaxb20.Condition> cond = null;
+            cond = getCondition(delegateId);
+            conditionOrAudienceRestrictionOrOneTimeUseList.addAll(cond);
+        }
+        final List<Object> statements = new ArrayList<Object>();
+        AuthnContext ctx = samlFac.createAuthnContext(authnCtx, null);
+        final AuthnStatement authnStatement = samlFac.createAuthnStatement(issueInst, null, ctx, null, null);
+        statements.add(authnStatement);
+        final AttributeStatement attributeStatement = samlFac.createAttributeStatement(null);
+        statements.add(attributeStatement);
+        final NameID issuerID = samlFac.createNameID(issuer, null, null);
+        assertion = samlFac.createAssertion(assertionId, issuerID, issueInst, conditions, null, null, statements);
+        if (!claimedAttrs.isEmpty()) {
+            assertion = GFIPMWSTrustUtil.addSamlAttributes(assertion, claimedAttrs);
+        }
+        ((com.sun.xml.wss.saml.assertion.saml20.jaxb20.Assertion) assertion)
+                .setSubject((com.sun.xml.wss.saml.internal.saml20.jaxb20.SubjectType) subj);
+        return assertion;
+    }
+
+    /**
+	 * TODO: The exception might be Generic, please verify and update the same
+	 * 
+	 */
+    private List<AudienceRestriction> autofix2(SAMLAssertionFactory samlFac, String appliesTo) throws WSTrustException {
+        List<AudienceRestriction> arc = null;
+        if (appliesTo != null) {
+            arc = new ArrayList<AudienceRestriction>();
+            List<String> au = new ArrayList<String>();
+            au.add(appliesTo);
+            arc.add(samlFac.createAudienceRestriction(au));
+        }
+        return arc;
+    }
+
+    /**
+	 * TODO: The exception might be Generic, please verify and update the same
+	 * 
+	 */
+    private NameID autofix7(com.sun.xml.wss.saml.Subject subj, QName idName, SAMLAssertionFactory samlFac,
+            Map<QName, List<String>> claimedAttrs) throws WSTrustException {
+        String id = null;
+        String idNS = null;
+        if (DEBUG) {
+            logger.log(Level.FINEST, "STS Token Provider:: claimed attrs");
+        }
+        final Set<Map.Entry<QName, List<String>>> entries = claimedAttrs.entrySet();
+        for (Map.Entry<QName, List<String>> entry : entries) {
+            final QName attrKey = entry.getKey();
+            final List<String> values = entry.getValue();
+            if (DEBUG) {
+                logger.log(Level.FINEST, " atrKey: " + attrKey.getLocalPart() + " attr values: " + values);
+            }
+            if (values != null) {
+                if ("ActAs".equals(attrKey.getLocalPart())) {
+                    if (values.size() > 0) {
+                        id = values.get(0);
+                    } else {
+                        id = null;
+                    }
+                    idNS = attrKey.getNamespaceURI();
+                    idName = attrKey;
+                    break;
+                } else if (STSAttributeProvider.NAME_IDENTIFIER.equals(attrKey.getLocalPart()) && subj == null) {
+                    if (values.size() > 0) {
+                        id = values.get(0);
+                    }
+                    idNS = attrKey.getNamespaceURI();
+                    idName = attrKey;
+                }
+            }
+        }
+        NameID nameId = null;
+        if (idName != null && id != null) {
+            nameId = samlFac.createNameID(id, idNS, null);
+            claimedAttrs.remove(idName);
+        }
+        return nameId;
     }
 }
