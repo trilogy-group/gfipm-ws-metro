@@ -78,164 +78,78 @@ public class GFIPMSTSTokenProvider extends DefaultSAMLTokenProvider implements S
 
     @Override
     public void generateToken(IssuedTokenContext ctx) throws WSTrustException {
-
         String issuer = ctx.getTokenIssuer();
         String appliesTo = ctx.getAppliesTo();
         String tokenType = ctx.getTokenType();
         String keyType = ctx.getKeyType();
         String oboString = (String) ctx.getOtherProperties().get("OnBehalfOf");
-        String confirMethod = (String) ctx.getOtherProperties().get(IssuedTokenContext.CONFIRMATION_METHOD);
-
-        if (DEBUG) {
-            logger.log(Level.FINEST, "STS Token Provider:\n"
-                    + "  \n\tIssuer: " + issuer
-                    + "  \n\tappliesTo: " + appliesTo
-                    + "  \n\ttokenType: " + tokenType
-                    + "  \n\tkeyType: " + keyType
-                    + "  \n\tOnBehalfOf: " + oboString
-                    + "  \n\tConfirmation Method: " + confirMethod
-                    + "  \n\tEncryption alg" + ctx.getEncryptionAlgorithm()
-                    + "  \n\tSignature alg" + ctx.getSignatureAlgorithm()
-                    + "  \n\tCanon alg" + ctx.getCanonicalizationAlgorithm());
-        }
-
+        String confirMethod = autofix1(oboString, tokenType, appliesTo, keyType, issuer, ctx);
         if ((appliesTo == null) || appliesTo.isEmpty()) {
             throw new WSTrustException("STS Token Provider: AppliesTo must have a value.");
         }
-
         if (!(WSTrustConstants.SAML20_ASSERTION_TOKEN_TYPE.equals(tokenType)
                 || WSTrustConstants.SAML20_WSS_TOKEN_TYPE.equals(tokenType))) {
             logger.log(Level.SEVERE, LogStringsMessages.WST_0031_UNSUPPORTED_TOKEN_TYPE(tokenType, appliesTo));
             throw new WSTrustException(LogStringsMessages.WST_0031_UNSUPPORTED_TOKEN_TYPE(tokenType, appliesTo));
         }
-
-        //Enable Sender Vouches profile on STS. 
-        //For details see Metro Sources wsit\ws-sx\wssx-impl\src\main\java\com\sun\xml\ws\security\trust\impl\WSTrustContractImpl.java
-        //Also see bug http://java.net/jira/browse/WSIT-1401
-        ctx.getOtherProperties().put(IssuedTokenContext.CONFIRMATION_METHOD, SAML_SENDER_VOUCHES_2_0);
-        confirMethod = (String) ctx.getOtherProperties().get(IssuedTokenContext.CONFIRMATION_METHOD);
-        if (DEBUG) {
-            logger.log(Level.FINEST, "STS Token Provider: new subect confirmation method is set: " + confirMethod);
-        }
-
-//        if (DEBUG) {
-//            Map<String, Object> otherPropertiesMap = ctx.getOtherProperties();
-//            GFIPMUtil.printMap("IssuedTokenContext : Other Properties Map", otherPropertiesMap);
-//        }
-
+        confirMethod = autofix5(confirMethod, ctx);
         int tokenLifeSpan = (int) (ctx.getExpirationTime().getTime() - ctx.getCreationTime().getTime());
-        Map<QName, List<String>> claimedAttrs = (Map<QName, List<String>>) ctx.getOtherProperties().get(IssuedTokenContext.CLAIMED_ATTRUBUTES);
+        Map<QName, List<String>> claimedAttrs = (Map<QName, List<String>>) ctx.getOtherProperties()
+                .get(IssuedTokenContext.CLAIMED_ATTRUBUTES);
         WSTrustVersion wstVer = (WSTrustVersion) ctx.getOtherProperties().get(IssuedTokenContext.WS_TRUST_VERSION);
-//         WSTrustElementFactory eleFac = WSTrustElementFactory.newInstance(wstVer);
-
-        //EntityId which is requesting token
         String delegateId = null;
         Element onBehalfOfToken = null;
         Subject subj = ctx.getRequestorSubject();
-
-        //could be simplified
-//           Set<X509Certificate> subjectX509Certificate = subj.getPublicCredentials(X509Certificate.class);           
         Set<Object> publicCred = subj.getPublicCredentials();
         for (Iterator<Object> it = publicCred.iterator(); it.hasNext();) {
             Object publicCredentialsObject = it.next();
             if (publicCredentialsObject instanceof X509Certificate) {
-                X509Certificate subjectX509Certificate = (X509Certificate) publicCredentialsObject;
-                //Delegate ID is determined from Entity Certificate number.
-                delegateId = tf.getEntityId(subjectX509Certificate);
-                if (DEBUG) {
-                    logger.log(Level.FINEST, "STS Token Provider: Got the following entity from public cert: " + delegateId + " Certificate " + subjectX509Certificate.getSubjectDN().getName());
-                }
+                delegateId = autofix4(delegateId, publicCredentialsObject);
             } else if (publicCredentialsObject instanceof Element) {
                 onBehalfOfToken = (Element) publicCredentialsObject;
                 if (DEBUG) {
-                    logger.log(Level.FINEST, "STS Token Provider:: Got the following OnBehalfOf token included: \n" + GFIPMUtil.putOutAsString(onBehalfOfToken));
+                    logger.log(Level.FINEST, "STS Token Provider:: Got the following OnBehalfOf token included: \n"
+                            + GFIPMUtil.putOutAsString(onBehalfOfToken));
                 }
-//            } else if ( publicCredentialsObject instanceof com.sun.enterprise.security.auth.login.DistinguishedPrincipalCredential ){
-//                com.sun.enterprise.security.auth.login.DistinguishedPrincipalCredential distinguishedPrincipalCredential = (com.sun.enterprise.security.auth.login.DistinguishedPrincipalCredential) publicCredentialsObject;
             } else {
                 if (DEBUG) {
                     logger.log(Level.FINEST, "Unknown object in public credentials " + publicCredentialsObject);
                 }
             }
         }
-
         String authnCtx = (String) ctx.getOtherProperties().get(IssuedTokenContext.AUTHN_CONTEXT);
-
-        //If we have OnBehalfOf request to ADS then we should use EntityId for appliesTo rather than entity SEP URL
         if (Boolean.parseBoolean(oboString)) {
             if (delegateId == null) {
-                throw new WSTrustException("STS Token Provider: OnBehalfOf request specified from WSC that could not be located in GFIPM TF.");
+                throw new WSTrustException(
+                        "STS Token Provider: OnBehalfOf request specified from WSC that could not be located in GFIPM TF.");
             }
             Assertion assertionOnBehalfOfToken = validateOnBehafOfToken(onBehalfOfToken);
-            X509Certificate x509CertificateTarget = (X509Certificate) ctx.getOtherProperties().get(IssuedTokenContext.TARGET_SERVICE_CERTIFICATE);
+            X509Certificate x509CertificateTarget = (X509Certificate) ctx.getOtherProperties()
+                    .get(IssuedTokenContext.TARGET_SERVICE_CERTIFICATE);
             String targetServiceId = tf.getEntityId(x509CertificateTarget);
             if (DEBUG) {
                 logger.log(Level.FINEST, "STS: Target service Id = " + targetServiceId);
             }
             if (targetServiceId == null || (!tf.isWebServiceProvider(targetServiceId))) {
-                throw new WSTrustException("STS Token Provider: OnBehalfOf request specified with AppliesTo that could not be located in GFIPM CTF or is not a WSP: " + appliesTo);
+                throw new WSTrustException(
+                        "STS Token Provider: OnBehalfOf request specified with AppliesTo that could not be located in GFIPM CTF or is not a WSP: "
+                                + appliesTo);
             }
-            //Use Entity Id from CTF istead of URL so when this token is received back it could be verified with delegate Id based on the requestor certificate
             appliesTo = targetServiceId;
-
-            //If authntication context is already provided from the incoming token copy it from there.            
             authnCtx = getAuthContextClassRef(assertionOnBehalfOfToken);
         }
-        if (DEBUG) {
-            logger.log(Level.FINEST, "STS: AppliesTo = " + appliesTo);
-            logger.log(Level.FINEST, "STS: Authentication Context = " + authnCtx);
-        }
-
-        // Create the KeyInfo for SubjectConfirmation
-//        final KeyInfo keyInfo = createKeyInfo(ctx);
-        // We don't need keyInfo for SenderVouches.
+        autofix2(appliesTo, authnCtx);
         final KeyInfo keyInfo = null;
-
-        // Create AssertionID
         final String assertionId = "uuid-" + UUID.randomUUID().toString();
-
-        //Create SAML assertion and the reference to the SAML assertion
         Assertion assertion = null;
         SecurityTokenReference samlReference = null;
-        assertion = createSAML20Assertion(wstVer, tokenLifeSpan, confirMethod, assertionId, issuer, appliesTo, keyInfo, claimedAttrs, keyType, authnCtx, delegateId);
-        samlReference = WSTrustUtil.createSecurityTokenReference(assertionId, MessageConstants.WSSE_SAML_v2_0_KEY_IDENTIFIER_VALUE_TYPE);
-        //set TokenType attribute for the STR as required in wss 1.1 saml token profile
+        assertion = createSAML20Assertion(wstVer, tokenLifeSpan, confirMethod, assertionId, issuer, appliesTo, keyInfo,
+                claimedAttrs, keyType, authnCtx, delegateId);
+        samlReference = WSTrustUtil.createSecurityTokenReference(assertionId,
+                MessageConstants.WSSE_SAML_v2_0_KEY_IDENTIFIER_VALUE_TYPE);
         samlReference.setTokenType(WSTrustConstants.SAML20_WSS_TOKEN_TYPE);
-
-        // Get the STS's certificate and private key
-        final X509Certificate stsCert = (X509Certificate) ctx.getOtherProperties().get(IssuedTokenContext.STS_CERTIFICATE);
-        final PrivateKey stsPrivKey = (PrivateKey) ctx.getOtherProperties().get(IssuedTokenContext.STS_PRIVATE_KEY);
-
-        // Sign the assertion with STS's private key
-        Element signedAssertion = null;
-        try {
-            XMLSignatureFactory fac = WSSPolicyConsumerImpl.getInstance().getSignatureFactory();
-            signedAssertion = assertion.sign(fac.newDigestMethod(MessageConstants.SHA256, null), MessageConstants.RSA_SHA256_SIGMETHOD, stsCert, stsPrivKey, true);
-            //if other methods are used then SignatureMethod defautls to SignatureMethod.RSA_SHA1 and DigestMethod to DigestMethod.SHA1
-            //signedAssertion = assertion.sign(stsCert, stsPrivKey, true, ctx.getSignatureAlgorithm(), ctx.getCanonicalizationAlgorithm());
-            //signedAssertion = assertion.sign(stsCert, stsPrivKey, true);            
-            //signedAssertion = assertion.sign(stsCert, stsPrivKey);
-        } catch (NoSuchAlgorithmException ex) {
-            logger.log(Level.SEVERE,
-                    LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
-            throw new WSTrustException(
-                    LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
-        } catch (InvalidAlgorithmParameterException ex) {
-            logger.log(Level.SEVERE,
-                    LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
-            throw new WSTrustException(
-                    LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
-        } catch (SAMLException ex) {
-            logger.log(Level.SEVERE,
-                    LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
-            throw new WSTrustException(
-                    LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
-        }
-
-        // put the SAML assertion and the references in the context
-        ctx.setSecurityToken(new GenericToken(signedAssertion));
-        ctx.setAttachedSecurityTokenReference(samlReference);
-        ctx.setUnAttachedSecurityTokenReference(samlReference);
+        autofix12(assertion, ctx);
+        autofix0(samlReference, ctx);
     }
 
     protected Assertion createSAML20Assertion(final WSTrustVersion wstVer,
@@ -641,5 +555,96 @@ public class GFIPMSTSTokenProvider extends DefaultSAMLTokenProvider implements S
             }
         }
         return authnContextClassRef;
+    }
+
+    /**
+	 * TODO: The exception might be Generic, please verify and update the same
+	 * 
+	 */
+    private void autofix0(SecurityTokenReference samlReference, IssuedTokenContext ctx) throws WSTrustException {
+        ctx.setAttachedSecurityTokenReference(samlReference);
+        ctx.setUnAttachedSecurityTokenReference(samlReference);
+    }
+
+    /**
+	 * TODO: The exception might be Generic, please verify and update the same
+	 * 
+	 */
+    private String autofix1(String oboString, String tokenType, String appliesTo, String keyType, String issuer,
+            IssuedTokenContext ctx) throws WSTrustException {
+        String confirMethod = (String) ctx.getOtherProperties().get(IssuedTokenContext.CONFIRMATION_METHOD);
+        if (DEBUG) {
+            logger.log(Level.FINEST,
+                    "STS Token Provider:\n" + "  \n\tIssuer: " + issuer + "  \n\tappliesTo: " + appliesTo
+                            + "  \n\ttokenType: " + tokenType + "  \n\tkeyType: " + keyType + "  \n\tOnBehalfOf: "
+                            + oboString + "  \n\tConfirmation Method: " + confirMethod + "  \n\tEncryption alg"
+                            + ctx.getEncryptionAlgorithm() + "  \n\tSignature alg" + ctx.getSignatureAlgorithm()
+                            + "  \n\tCanon alg" + ctx.getCanonicalizationAlgorithm());
+        }
+        return confirMethod;
+    }
+
+    /**
+	 * TODO: The exception might be Generic, please verify and update the same
+	 * 
+	 */
+    private void autofix2(String appliesTo, String authnCtx) throws WSTrustException {
+        if (DEBUG) {
+            logger.log(Level.FINEST, "STS: AppliesTo = " + appliesTo);
+            logger.log(Level.FINEST, "STS: Authentication Context = " + authnCtx);
+        }
+    }
+
+    /**
+	 * TODO: The exception might be Generic, please verify and update the same
+	 * 
+	 */
+    private String autofix4(String delegateId, Object publicCredentialsObject) throws WSTrustException {
+        X509Certificate subjectX509Certificate = (X509Certificate) publicCredentialsObject;
+        delegateId = tf.getEntityId(subjectX509Certificate);
+        if (DEBUG) {
+            logger.log(Level.FINEST, "STS Token Provider: Got the following entity from public cert: " + delegateId
+                    + " Certificate " + subjectX509Certificate.getSubjectDN().getName());
+        }
+        return delegateId;
+    }
+
+    /**
+	 * TODO: The exception might be Generic, please verify and update the same
+	 * 
+	 */
+    private String autofix5(String confirMethod, IssuedTokenContext ctx) throws WSTrustException {
+        ctx.getOtherProperties().put(IssuedTokenContext.CONFIRMATION_METHOD, SAML_SENDER_VOUCHES_2_0);
+        confirMethod = (String) ctx.getOtherProperties().get(IssuedTokenContext.CONFIRMATION_METHOD);
+        if (DEBUG) {
+            logger.log(Level.FINEST, "STS Token Provider: new subect confirmation method is set: " + confirMethod);
+        }
+        return confirMethod;
+    }
+
+    /**
+	 * TODO: The exception might be Generic, please verify and update the same
+	 * 
+	 */
+    private void autofix12(Assertion assertion, IssuedTokenContext ctx) throws WSTrustException {
+        final X509Certificate stsCert = (X509Certificate) ctx.getOtherProperties()
+                .get(IssuedTokenContext.STS_CERTIFICATE);
+        final PrivateKey stsPrivKey = (PrivateKey) ctx.getOtherProperties().get(IssuedTokenContext.STS_PRIVATE_KEY);
+        Element signedAssertion = null;
+        try {
+            XMLSignatureFactory fac = WSSPolicyConsumerImpl.getInstance().getSignatureFactory();
+            signedAssertion = assertion.sign(fac.newDigestMethod(MessageConstants.SHA256, null),
+                    MessageConstants.RSA_SHA256_SIGMETHOD, stsCert, stsPrivKey, true);
+        } catch (NoSuchAlgorithmException ex) {
+            logger.log(Level.SEVERE, LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
+            throw new WSTrustException(LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
+        } catch (InvalidAlgorithmParameterException ex) {
+            logger.log(Level.SEVERE, LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
+            throw new WSTrustException(LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
+        } catch (SAMLException ex) {
+            logger.log(Level.SEVERE, LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
+            throw new WSTrustException(LogStringsMessages.WST_0032_ERROR_CREATING_SAML_ASSERTION(), ex);
+        }
+        ctx.setSecurityToken(new GenericToken(signedAssertion));
     }
 }
